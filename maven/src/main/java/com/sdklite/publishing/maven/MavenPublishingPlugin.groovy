@@ -44,7 +44,7 @@ public class MavenPublishingPlugin implements Plugin<Project> {
                             packaging project.hasProperty("packaging") ? project.packaging : 'aar'
                             name project.name
                             description project.description ?: ''
-                            url project.hasProperty('url') ? project.url : project.SCM_URL
+                            url project.hasProperty('url') ? project.url : project.hasProperty('SCM_URL') ? project.SCM_URL : ''
 
                             scm {
                                 url project.hasProperty('SCM_URL') ? project.SCM_URL : ''
