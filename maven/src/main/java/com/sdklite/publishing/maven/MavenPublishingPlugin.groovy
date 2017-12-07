@@ -19,16 +19,26 @@ public class MavenPublishingPlugin implements Plugin<Project> {
 
     @Override
     void apply(final Project project) {
-        project.afterEvaluate {
-            def isApp = project.plugins.hasPlugin(AppPlugin);
-            def isLib = project.plugins.hasPlugin(LibraryPlugin);
+        def isApp = project.plugins.hasPlugin(AppPlugin);
+        def isLib = project.plugins.hasPlugin(LibraryPlugin);
 
-            if ((!isApp) && (!isLib)) {
-                throw new GradleException("Not an Android project");
-            }
+        if ((!isApp) && (!isLib)) {
+            throw new GradleException("Not an Android project");
+        }
 
+        if (!project.plugins.hasPlugin('maven')) {
             project.apply plugin: 'maven'
+        }
+
+        if (!project.plugins.hasPlugin('signing')) {
             project.apply plugin: 'signing'
+        }
+
+        project.afterEvaluate {
+            final def username = 'git config --get user.name'.execute().text.trim() ?: System.getProperty('user.name')
+            final def scm_url = 'git config --get remote.origin.url'.execute().text.trim()
+            final def scm_connection = "scm:git:${scm_url}"
+            final def scm_dev_connection = scm_connection
 
             project.uploadArchives {
                 repositories {
@@ -39,31 +49,33 @@ public class MavenPublishingPlugin implements Plugin<Project> {
 
                         pom.project {
                             groupId project.group
-                            artifactId project.hasProperty("artifactId") ? project.artifactId : project.name
-                            version project.version
-                            packaging project.hasProperty("packaging") ? project.packaging : 'aar'
+                            artifactId project.hasProperty("ARTIFACT_ID") ? project.ARTIFACT_ID : project.name
+                            version project.hasProperty("VERSION") ? project.VERSION : project.version
+                            packaging project.hasProperty("PACKAGING") ? project.PACKAGING : 'aar'
                             name project.name
                             description project.description ?: ''
-                            url project.hasProperty('url') ? project.url : project.hasProperty('SCM_URL') ? project.SCM_URL : ''
+                            url scm_url
 
                             scm {
-                                url project.hasProperty('SCM_URL') ? project.SCM_URL : ''
-                                connection project.hasProperty('SCM_CONNECTION') ? project.SCM_CONNECTION : ''
-                                developerConnection project.hasProperty('SCM_DEV_CONNECTION') ? project.SCM_DEV_CONNECTION : ''
+                                url project.hasProperty('SCM_URL') ? project.SCM_URL : scm_url
+                                connection project.hasProperty('SCM_CONNECTION') ? project.SCM_CONNECTION : scm_connection
+                                developerConnection project.hasProperty('SCM_DEV_CONNECTION') ? project.SCM_DEV_CONNECTION : scm_dev_connection
                             }
 
-                            licenses {
-                                license {
-                                    name project.hasProperty('LICENSE_NAME') ? project.LICENSE_NAME : ''
-                                    url project.hasProperty('LICENSE_URL') ? project.LICENSE_URL : ''
-                                    distribution project.hasProperty('LICENSE_DIST') ? project.LICENSE_DIST : ''
+                            if (project.hasProperty('LICENSE_NAME') && project.hasProperty('LICENSE_URL') && project.hasProperty('LICENSE_DIST')) {
+                                licenses {
+                                    license {
+                                        name project.LICENSE_NAME
+                                        url project.LICENSE_URL
+                                        distribution project.LICENSE_DIST
+                                    }
                                 }
                             }
 
                             developers {
                                 developer {
-                                    id project.hasProperty('DEVELOPER_ID') ? project.DEVELOPER_ID : System.getProperty('user.name')
-                                    name project.hasProperty('DEVELOPER_NAME') ? project.DEVELOPER_NAME : System.getProperty('user.name')
+                                    id username
+                                    name username
                                 }
                             }
                         }
@@ -83,34 +95,57 @@ public class MavenPublishingPlugin implements Plugin<Project> {
                 sign project.configurations.archives
             }
 
-            def androidJavadocs = project.tasks.create('androidJavadocs', Javadoc) {
-                source = project.android.sourceSets.main.java.srcDirs
-                classpath += project.files(project.android.bootClasspath.join(File.separator))
+            project.android.libraryVariants.all { variant ->
+                def bundle = project.tasks.findByName("bundle${variant.name.capitalize()}")
+                def testUnitTest = project.tasks.findByName("test${variant.name.capitalize()}UnitTest")
 
-                if (JavaVersion.current().isJava8Compatible()) {
-                    project.allprojects { Project p ->
-                        p.tasks.withType(Javadoc) {
-                            options.addStringOption('Xdoclint:none', '-quiet')
+                def androidJavadocs = project.tasks.create("android${variant.name.capitalize()}Javadocs", Javadoc) {
+                    source = project.files(variant.javaCompiler.source) + project.fileTree("${project.buildDir}${File.separator}generated${File.separator}source")
+                    classpath += project.files(project.android.bootClasspath)
+                    classpath += project.files(variant.javaCompiler.classpath)
+                    excludes += [
+                        'android/**/*.java',
+                        'android/databinding/**/*.java',
+                        '**/android/databinding/*Binding.java',
+                        '**/BR.java',
+                        '**/*_MembersInjector.java',
+                        '**/Dagger*Component.java',
+                        '**/*Module_*Factory.java',
+                    ]
+    
+                    if (JavaVersion.current().isJava8Compatible()) {
+                        project.allprojects { Project p ->
+                            p.tasks.withType(Javadoc) {
+                                options {
+                                    addStringOption 'Xdoclint:none', '-quiet'
+                                    addStringOption 'charset', 'UTF-8'
+                                    addStringOption 'encoding', 'UTF-8'
+                                }
+                            }
                         }
                     }
                 }
-            }
 
-            def androidJavadocsJar = project.tasks.create('androidJavadocsJar', Jar) {
-                classifier = 'javadoc'
-                from androidJavadocs.destinationDir
-            }
+                def androidJavadocsJar = project.tasks.create("android${variant.name.capitalize()}JavadocsJar", Jar) {
+                    classifier = 'javadoc'
+                    from androidJavadocs.destinationDir
+                }
 
-            def androidSourcesJar = project.tasks.create('androidSourcesJar', Jar) {
-                classifier = 'sources'
-                from project.android.sourceSets.main.java.sourceFiles
-            }
+                def androidSourcesJar = project.tasks.create("android${variant.name.capitalize()}SourcesJar", Jar) {
+                    classifier = 'sources'
+                    from project.files(variant.javaCompiler.source) + project.fileTree("${project.buildDir}${File.separator}generated${File.separator}source")
+                }
 
-            androidJavadocsJar.dependsOn(androidJavadocs)
+                
+                bundle.dependsOn testUnitTest
+                bundle.mustRunAfter testUnitTest
+                androidJavadocsJar.dependsOn androidJavadocs
+                androidJavadocs.dependsOn variant.javaCompiler
+            }
 
             project.artifacts {
-                archives androidSourcesJar
-                archives androidJavadocsJar
+                archives project.tasks.findByName("android${project.android.defaultPublishConfig.capitalize()}SourcesJar")
+                archives project.tasks.findByName("android${project.android.defaultPublishConfig.capitalize()}JavadocsJar")
             }
         }
     }
