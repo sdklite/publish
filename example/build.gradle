@@ -8,7 +8,7 @@ buildscript {
     dependencies {
         classpath 'com.android.tools.build:gradle:3.0.0'
         classpath 'com.sdklite.jacoco:gradle:0.1.0'
-        classpath 'com.sdklite.publishing:maven:0.1.0'
+        classpath 'com.sdklite.publishing:maven:0.2.0'
     }
 }
 
@@ -22,7 +22,7 @@ allprojects {
 }
 
 group 'com.sdklite.publishing.example'
-version '0.0.1'
+version '0.0.2'
 
 apply plugin: 'com.android.library'
 apply plugin: 'com.sdklite.jacoco'
